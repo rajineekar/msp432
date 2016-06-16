@@ -1,5 +1,5 @@
 /* --COPYRIGHT--,BSD_EX
- * Copyright (c) 2013, Texas Instruments Incorporated
+ * Copyright (c) 2014, Texas Instruments Incorporated
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -43,37 +43,64 @@
  *
  * --/COPYRIGHT--*/
 //******************************************************************************
-//   MSP432P401 Demo - Software Toggle P1.0
+//   MSP432P401 Demo - eUSCI_A3, SPI 4-Wire Slave Data Echo
 //
-//   Description: Toggle P1.0 by xor'ing P1.0 inside of a software loop.
-//   ACLK = 32.768kHz, MCLK = SMCLK = default DCO~1MHz
+//   Description: SPI slave talks to SPI master using 4-wire mode. Data received
+//   from master is echoed back.
+//   ACLK = default REFO ~32768Hz, MCLK = SMCLK = default DCODIV ~1MHz.
+//   Note: Ensure slave is powered up before master to prevent delays due to
+//   slave init.
 //
-//                MSP432p401rpz
-//             -----------------
-//         /|\|                 |
-//          | |                 |
-//          --|RST              |
-//            |                 |
-//            |             P1.0|-->LED
 //
-//   Dung Dang
+//                   MSP432P401
+//                 -----------------
+//             /|\|                 |
+//              | |                 |
+//              --|RST              |
+//                |                 |
+//                |             P9.7|<- Data In (UCA3SIMO)
+//                |             P9.6|-> Data Out (UCA3SOMI)
+//                |             P9.5|-> Serial Clock Out (UCA3CLK)
+//                |             P9.4|-> Slave Select (UCA3STE)
+//
+//
+//   Wei Zhao
 //   Texas Instruments Inc.
-//   Nov 2013
+//   June 2014
 //   Built with Code Composer Studio V6.0
 //******************************************************************************
 #include "msp.h"
-#include <stdint.h>
 
-int main(void) {
-    volatile uint32_t i;
+int main(void)
+{
+  WDTCTL = WDTPW | WDTHOLD;                 // Stop watchdog timer
+  
+  P9SEL0 |= BIT4 | BIT5 | BIT6 | BIT7;      // set 4-SPI pin as second function
 
-    WDTCTL = WDTPW | WDTHOLD;               // Stop WDT
-    P1DIR |= BIT0;                          // P1.0 set as output
+  __enable_interrupt();
+  NVIC_ISER0 = 1 << ((INT_EUSCIA3 - 16) & 31); // Enable eUSCIA3 interrupt in NVIC module
+  
+  UCA3CTLW0 |= UCSWRST;                     // **Put state machine in reset**
+                                            // 4-pin, 8-bit SPI slave
+  UCA3CTLW0 |= UCSYNC|UCCKPL|UCMSB|UCMODE_1|UCSTEM;
+                                            // Clock polarity high, MSB
+  UCA3CTLW0 |= UCSSEL__ACLK;                // ACLK
+  UCA3BR0 = 0x01;                           // /2,fBitClock = fBRCLK/(UCBRx+1).
+  UCA3BR1 = 0;                              //
+  UCA3MCTLW = 0;                            // No modulation
+  UCA3CTLW0 &= ~UCSWRST;                    // **Initialize USCI state machine**
+  UCA3IE |= UCRXIE;                         // Enable USCI_A3 RX interrupt
+  
+  __sleep();
+}
 
-    while (1)                               // continuous loop
+// SPI interrupt service routine
+void eUSCIA3IsrHandler(void)
+{
+    if (UCA3IFG & UCRXIFG)
     {
-        P1OUT ^= BIT0;                      // Blink P1.0 LED
-        for (i = 20000; i > 0; i--);        // Delay
+    while (!(UCA3IFG&UCTXIFG));               // USCI_A3 TX buffer ready?
+    UCA3TXBUF = UCA3RXBUF;                    // Echo received data
     }
 }
 
